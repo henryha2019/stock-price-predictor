@@ -1,0 +1,39 @@
+{
+  "family": "stock-price-predictor",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "256",
+  "memory": "512",
+  "executionRoleArn": "REPLACE_ME_ECS_EXEC_ROLE_ARN",
+  "taskRoleArn": "REPLACE_ME_ECS_TASK_ROLE_ARN",
+  "containerDefinitions": [
+    {
+      "name": "stock-price-predictor",
+      "image": "REPLACE_ME",
+      "essential": true,
+      "portMappings": [
+        { "containerPort": 8000, "protocol": "tcp" }
+      ],
+      "environment": [
+        { "name": "MLFLOW_TRACKING_URI", "value": "REPLACE_ME" },
+        { "name": "MODEL_NAME", "value": "stock-price-predictor" },
+        { "name": "MODEL_ALIAS", "value": "prod" }
+      ],
+      "healthCheck": {
+        "command": ["CMD-SHELL", "curl -fsS http://localhost:8000/health || exit 1"],
+        "interval": 30,
+        "timeout": 5,
+        "retries": 3,
+        "startPeriod": 20
+      },
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/stock-price-predictor",
+          "awslogs-region": "REPLACE_ME",
+          "awslogs-stream-prefix": "ecs"
+        }
+      }
+    }
+  ]
+}

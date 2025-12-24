@@ -1,0 +1,7 @@
+service:
+  port: 8000
+mlflow:
+  # These are typically env vars in production
+  tracking_uri_env: "MLFLOW_TRACKING_URI"
+  model_name_env: "MODEL_NAME"
+  model_alias_env: "MODEL_ALIAS"
