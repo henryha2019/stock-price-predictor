@@ -4,13 +4,30 @@ data:
   # Keep MVP small; add tickers later
   universe: ["AAPL", "MSFT", "NVDA"]
 
-train:
-  horizon: 1
-  n_splits: 5
-  ridge_alpha: 1.0
-  seed: 42
-
 mlflow:
   tracking_uri: "http://127.0.0.1:5000"
   experiment: "stock-price-predictor"
   model_name: "stock-price-predictor"
+  register: true
+
+ridge:
+  alpha: 1.0
+  seed: 42
+
+automl:
+  time_budget_s: 120
+  task: "regression"
+  metric: "mae"
+
+transformer:
+  seq_len: 30
+  epochs: 5
+  lr: 0.001
+  batch_size: 64
+  d_model: 32
+  nhead: 4
+  num_layers: 2
+
+hf:
+  # placeholder until model chosen
+  model_id: "TBD"
