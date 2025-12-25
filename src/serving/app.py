@@ -4,7 +4,7 @@ from __future__ import annotations
 import os
 import time
 from dataclasses import dataclass
-from typing import Optional, Any, Dict, List
+from typing import Optional, Any, List
 
 import mlflow
 import numpy as np
