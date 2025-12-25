@@ -6,6 +6,7 @@ from typing import Dict, Any, List
 import yaml
 import mlflow
 import pandas as pd
+import numpy as np
 from sklearn.model_selection import TimeSeriesSplit
 
 from src.data.load_hf import load_daily_ohlcv
@@ -41,15 +42,27 @@ def _infer_feature_cols(df: pd.DataFrame) -> List[str]:
     return sorted(feature_cols)
 
 
+def _coerce_all_numeric_float64(df: pd.DataFrame) -> pd.DataFrame:
+    out = df.copy()
+    num_cols = out.select_dtypes(include=["number"]).columns
+    for c in num_cols:
+        out[c] = pd.to_numeric(out[c], errors="coerce")
+    out[num_cols] = out[num_cols].astype("float64")
+    out = out.replace([np.inf, -np.inf], np.nan)
+    return out
+
+
 def main() -> None:
     args = parse_args()
 
     with open(args.config, "r") as f:
         cfg: Dict[str, Any] = yaml.safe_load(f)
 
+    # ---- MLflow setup ----
     mlflow.set_tracking_uri(cfg["mlflow"]["tracking_uri"])
     mlflow.set_experiment(cfg["mlflow"]["experiment"])
 
+    # ---- Load data ----
     df = load_daily_ohlcv(cfg["data"]["hf_dataset_id"], split=cfg["data"]["split"])
 
     price_col = cfg["data"].get("price_col", "adj_close")
@@ -65,6 +78,7 @@ def main() -> None:
 
     df = df.sort_values(["symbol", "date"]).copy()
 
+    # ---- Feature engineering ----
     df = add_returns(df, price_col=price_col, group_col="symbol")
     df = make_tabular_features(df, group_col="symbol", price_col=price_col)
 
@@ -72,20 +86,33 @@ def main() -> None:
     df["target"] = df.groupby("symbol")["log_return_1"].shift(-horizon)
     df = df.dropna(subset=["target"]).copy()
 
+    # Force numeric types float64 BEFORE selecting features
+    df = _coerce_all_numeric_float64(df)
+
     feature_cols = _infer_feature_cols(df)
+
+    # Rolling features produce early NaNs; drop
     df = df.dropna(subset=feature_cols + ["target"]).copy()
-    if "volume" in df.columns:
-        df["volume"] = df["volume"].astype("float64")
 
     X = df[feature_cols].copy()
     y = df["target"].copy()
 
-    min_rows = int(cfg["train"].get("min_rows", 200))
-    if len(X) < min_rows:
-        raise ValueError(f"Not enough training rows after feature/target creation: {len(X)} < {min_rows}")
+    if len(X) < 500:
+        raise ValueError(f"Not enough training rows after feature/target creation: {len(X)}")
 
+    # Inject feature metadata into cfg so every model logs feature_cols.json
+    cfg = dict(cfg)
+    cfg["features"] = {
+        "feature_cols": feature_cols,
+        "price_col": price_col,
+        "horizon": horizon,
+    }
+
+    # ---- Evaluation splits ----
     n_splits = int(cfg["train"].get("n_splits", 5))
     tscv = TimeSeriesSplit(n_splits=n_splits)
+
+    model = get_model(args.model_family)
 
     with mlflow.start_run(run_name=args.model_family):
         mlflow.set_tag("project", "stock-price-predictor")
@@ -102,13 +129,7 @@ def main() -> None:
             }
         )
 
-        # Pass feature_cols down so each model can log it in its OWN run (child run for final training)
-        cfg = dict(cfg)
-        cfg["features"] = dict(cfg.get("features", {}))
-        cfg["features"]["feature_cols"] = feature_cols
-        cfg["features"]["price_col"] = price_col
-
-        # Optional CV
+        # Walk-forward CV metrics (skip for deep models unless enabled)
         fold_mae: List[float] = []
         fold_diracc: List[float] = []
 
@@ -125,7 +146,7 @@ def main() -> None:
 
             cfg_fold = dict(cfg)
             cfg_fold["mlflow"] = dict(cfg.get("mlflow", {}))
-            cfg_fold["mlflow"]["register"] = False
+            cfg_fold["mlflow"]["register"] = False  # CV folds never register
 
             res = fold_model.train_and_log(X_tr, y_tr, X_va, y_va, cfg_fold)
 
@@ -135,6 +156,7 @@ def main() -> None:
 
             m = mae(y_va, pred)
             d = directional_accuracy(y_va, pred)
+
             fold_mae.append(m)
             fold_diracc.append(d)
 
@@ -142,10 +164,10 @@ def main() -> None:
             mlflow.log_metric(f"diracc_fold_{i}", d)
 
         if fold_mae:
-            mlflow.log_metric("mae_cv_mean", sum(fold_mae) / len(fold_mae))
-            mlflow.log_metric("diracc_cv_mean", sum(fold_diracc) / len(fold_diracc))
+            mlflow.log_metric("mae_cv_mean", float(sum(fold_mae) / len(fold_mae)))
+            mlflow.log_metric("diracc_cv_mean", float(sum(fold_diracc) / len(fold_diracc)))
 
-        # Final train/val split
+        # Final train with chronological holdout
         split_idx = int(len(X) * 0.8)
         X_train, y_train = X.iloc[:split_idx], y.iloc[:split_idx]
         X_val, y_val = X.iloc[split_idx:], y.iloc[split_idx:]
@@ -154,7 +176,6 @@ def main() -> None:
         cfg_final["mlflow"] = dict(cfg.get("mlflow", {}))
         cfg_final["mlflow"]["register"] = bool(cfg_final["mlflow"].get("register", True))
 
-        model = get_model(args.model_family)
         result = model.train_and_log(X_train, y_train, X_val, y_val, cfg_final)
 
         mlflow.log_params(
