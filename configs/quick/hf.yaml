@@ -1,0 +1,25 @@
+data:
+  hf_dataset_id: "paperswithbacktest/Stocks-Daily-Price"
+  split: "train"
+  universe: ["AAPL", "MSFT", "NVDA"]
+  price_col: "adj_close"
+
+mlflow:
+  tracking_uri: "http://127.0.0.1:5001"
+  experiment: "stock-price-predictor"
+  model_name: "stock-price-predictor"
+  register: true
+
+train:
+  horizon: 1
+  n_splits: 1
+  cv_for_deep_models: false
+  use_all_features: true
+
+hf:
+  model_id: "amazon/chronos-t5-small"
+  device: "cpu"
+  torch_dtype: "float32"
+  num_samples: 32
+  quantile: 0.5
+  min_context: 64

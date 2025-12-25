@@ -1,0 +1,26 @@
+data:
+  hf_dataset_id: "paperswithbacktest/Stocks-Daily-Price"
+  split: "train"
+  universe: ["AAPL", "MSFT", "NVDA"]
+  price_col: "adj_close"
+
+mlflow:
+  tracking_uri: "http://127.0.0.1:5001"
+  experiment: "stock-price-predictor"
+  model_name: "stock-price-predictor"
+  register: true
+
+train:
+  horizon: 1
+  n_splits: 2
+  cv_for_deep_models: false
+  use_all_features: true
+
+transformer:
+  seq_len: 30
+  epochs: 1
+  lr: 0.001
+  batch_size: 128
+  d_model: 16
+  nhead: 2
+  num_layers: 1

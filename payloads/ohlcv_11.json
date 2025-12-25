@@ -1,0 +1,17 @@
+{
+  "symbol": "AAPL",
+  "horizon": 1,
+  "ohlcv_window": [
+    { "date": "2024-01-02", "open": 100, "high": 101, "low": 99,  "close": 100, "adj_close": 100, "volume": 100000 },
+    { "date": "2024-01-03", "open": 101, "high": 102, "low": 100, "close": 101, "adj_close": 101, "volume": 105000 },
+    { "date": "2024-01-04", "open": 102, "high": 103, "low": 101, "close": 102, "adj_close": 102, "volume": 110000 },
+    { "date": "2024-01-05", "open": 103, "high": 104, "low": 102, "close": 103, "adj_close": 103, "volume": 115000 },
+    { "date": "2024-01-08", "open": 104, "high": 105, "low": 103, "close": 104, "adj_close": 104, "volume": 120000 },
+    { "date": "2024-01-09", "open": 105, "high": 106, "low": 104, "close": 105, "adj_close": 105, "volume": 125000 },
+    { "date": "2024-01-10", "open": 106, "high": 107, "low": 105, "close": 106, "adj_close": 106, "volume": 130000 },
+    { "date": "2024-01-11", "open": 107, "high": 108, "low": 106, "close": 107, "adj_close": 107, "volume": 135000 },
+    { "date": "2024-01-12", "open": 108, "high": 109, "low": 107, "close": 108, "adj_close": 108, "volume": 140000 },
+    { "date": "2024-01-15", "open": 109, "high": 110, "low": 108, "close": 109, "adj_close": 109, "volume": 145000 },
+    { "date": "2024-01-16", "open": 110, "high": 111, "low": 109, "close": 110, "adj_close": 110, "volume": 150000 }
+  ]
+}
