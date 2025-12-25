@@ -18,8 +18,9 @@ huggingface-hub==0.26.5
 # MLflow
 mlflow==2.19.0
 
-# AutoML (optional)
-flaml==2.3.0
+# AutoML
+flaml[automl]==2.3.0
+xgboost
 
 # Transformers / TS foundation model (Chronos)
 torch==2.5.1
