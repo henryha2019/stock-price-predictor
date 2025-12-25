@@ -82,7 +82,7 @@ def main() -> None:
     # ---- Train + log via dispatcher ----
     model = get_model(args.model_family)
 
-    with mlflow.start_run(run_name=args.model_family) as parent_run:
+    with mlflow.start_run(run_name=args.model_family):
         mlflow.set_tag("project", "stock-price-predictor")
         mlflow.set_tag("model_family", args.model_family)
 

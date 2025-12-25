@@ -97,7 +97,8 @@ class CustomTransformerModel:
 
             # Save weights + columns + seq_len
             tmp_dir = "artifacts_transformer"
-            import os, json
+            import os
+            import json
             os.makedirs(tmp_dir, exist_ok=True)
             torch.save(model.state_dict(), f"{tmp_dir}/weights.pt")
             with open(f"{tmp_dir}/meta.json", "w") as f:

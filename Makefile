@@ -1,6 +1,6 @@
 .PHONY: setup lint test train serve docker-build
 
-PYTHON := python3
+PYTHON := python3.11
 VENV := .venv
 BIN := $(VENV)/bin
 
@@ -8,12 +8,13 @@ setup:
 	$(PYTHON) -m venv $(VENV)
 	$(BIN)/pip install --upgrade pip setuptools wheel
 	$(BIN)/pip install -r requirements.txt
+	$(BIN)/pip install -e .
 
 lint:
 	$(BIN)/ruff check .
 
 test:
-	$(BIN)/pytest -q
+	PYTHONPATH=. $(BIN)/pytest -q
 
 train:
 	$(BIN)/python -m src.training.train --config configs/train.yaml

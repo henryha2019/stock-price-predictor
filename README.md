@@ -152,13 +152,13 @@ make test
 In a new terminal:
 
 ```bash
-mlflow ui --host 0.0.0.0 --port 5000
+ .venv/bin/mlflow ui --host 0.0.0.0 --port 5001
 ```
 
 Set MLflow env vars:
 
 ```bash
-export MLFLOW_TRACKING_URI=http://127.0.0.1:5000
+export MLFLOW_TRACKING_URI=http://127.0.0.1:5001
 export MODEL_NAME=stock-price-predictor
 export MODEL_ALIAS=prod
 ```
@@ -183,7 +183,7 @@ python -m src.training.train --config configs/train.yaml --model_family ridge
 After training prints a registered version (e.g., `12`):
 
 ```bash
-export MLFLOW_TRACKING_URI=http://127.0.0.1:5000
+export MLFLOW_TRACKING_URI=http://127.0.0.1:5001
 export MODEL_NAME=stock-price-predictor
 export MODEL_ALIAS=prod
 ./scripts/promote_model.sh 12
