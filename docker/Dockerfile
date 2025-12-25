@@ -10,11 +10,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
   && rm -rf /var/lib/apt/lists/*
 
+# Install deps first (cache-friendly)
+COPY pyproject.toml /app/pyproject.toml
 COPY requirements.txt /app/requirements.txt
-RUN pip install --no-cache-dir -r /app/requirements.txt
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel \
+ && pip install --no-cache-dir -r /app/requirements.txt
 
+# Copy app code
 COPY src /app/src
 COPY configs /app/configs
+
+# Install project
+RUN pip install --no-cache-dir -e /app
 
 EXPOSE 8000
 
