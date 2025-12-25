@@ -23,7 +23,6 @@ jobs:
           python -m pip install --upgrade pip setuptools wheel
           pip install -r requirements.txt
           if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
-          pip install -e .
 
       - name: Lint
         run: |
@@ -32,5 +31,6 @@ jobs:
       - name: Run tests
         env:
           PYTHONPATH: .
+          SKIP_MODEL_LOAD: "1"
         run: |
           pytest -q

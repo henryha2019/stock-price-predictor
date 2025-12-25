@@ -1,7 +1,7 @@
 # Stock Price Predictor
 **Production-Grade ML Deployment Pipeline with CI/CD, Model Registry, and Cloud Infrastructure**
 
-![Python](https://img.shields.io/badge/python-3.12-blue)
+![Python](https://img.shields.io/badge/python-3.11%2B-blue)
 ![FastAPI](https://img.shields.io/badge/FastAPI-production-green)
 ![MLflow](https://img.shields.io/badge/MLflow-model--registry-blue)
 ![AWS](https://img.shields.io/badge/AWS-ECS%20%7C%20EC2%20%7C%20S3-orange)
@@ -39,7 +39,7 @@ Train and compare multiple model families under one pipeline:
 - **Ridge** (interpretable baseline)
 - **AutoML** (FLAML)
 - **Custom Transformer** (PyTorch)
-- **HF fine-tune** (placeholder until model choice)
+- **HF Foundation Model** (Amazon Chronos: `amazon/chronos-t5-small`)
 
 All models register under the **same `MODEL_NAME`** and the API always serves **`@prod`**.
 
@@ -135,7 +135,7 @@ stock-price-predictor/
 
 ### 0) Prerequisites
 
-* Python 3.12
+* Python 3.11+
 * Docker (for container testing)
 * (Optional) AWS CLI + Terraform (for cloud deploy)
 
@@ -152,7 +152,7 @@ make test
 In a new terminal:
 
 ```bash
- .venv/bin/mlflow ui --host 0.0.0.0 --port 5001
+make mlflow
 ```
 
 Set MLflow env vars:
@@ -167,15 +167,23 @@ export MODEL_ALIAS=prod
 
 Edit `configs/train.yaml`:
 
-* Set `data.hf_dataset_id` to a real HF dataset with columns: `date`, `symbol`, `close`
+* Set `data.hf_dataset_id` to: `paperswithbacktest/Stocks-Daily-Price`
+* Dataset schema: `symbol, date, open, high, low, close, volume, adj_close`
+* Recommended price column for returns: `adj_close`
 * Set `data.universe` to a small list of tickers (MVP)
+* This dataset is provided as a single `train` split; time-based validation is done via walk-forward splitting in training.
 
 ### 4) Train a model and register it
 
 Example (ridge baseline):
 
 ```bash
-python -m src.training.train --config configs/train.yaml --model_family ridge
+make train
+
+# Train other families
+PYTHONPATH=. .venv/bin/python -m src.training.train --config configs/train.yaml --model_family automl
+PYTHONPATH=. .venv/bin/python -m src.training.train --config configs/train.yaml --model_family custom_transformer
+PYTHONPATH=. .venv/bin/python -m src.training.train --config configs/train.yaml --model_family hf_finetune
 ```
 
 ### 5) Promote a version to production alias (`prod`)
@@ -208,10 +216,11 @@ curl -X POST "http://127.0.0.1:8000/predict" \
   -d '{
     "symbol":"AAPL",
     "horizon":1,
-    "last_close":200.0,
-    "last_returns":[0.001,-0.002,0.0005,0.0012,-0.0007,0.0009,0.001,-0.0011,0.0004,0.0015,
-                    0.0002,-0.0003,0.0007,0.0011,-0.0008,0.0006,0.0001,-0.001,0.0013,0.0008,
-                    -0.0006,0.0009,0.001,-0.0004,0.0002,0.0005,-0.0003,0.0006,0.0001,0.0004]
+    "ohlcv_window":[
+      {"date":"2024-11-01","open":170.0,"high":172.0,"low":169.0,"close":171.0,"volume":52000000},
+      {"date":"2024-11-04","open":171.0,"high":173.0,"low":170.0,"close":172.5,"volume":48000000}
+      // ... include >= 30 rows (>= 64 recommended for Chronos)
+    ]
   }'
 ```
 
@@ -229,7 +238,7 @@ Run:
 
 ```bash
 docker run -p 8000:8000 \
-  -e MLFLOW_TRACKING_URI=http://host.docker.internal:5000 \
+  -e MLFLOW_TRACKING_URI=http://host.docker.internal:5001 \
   -e MODEL_NAME=stock-price-predictor \
   -e MODEL_ALIAS=prod \
   stock-price-predictor:local
@@ -328,7 +337,7 @@ You must configure GitHub Secrets for deploy (or upgrade to OIDC later):
 
 * Do not commit secrets. Use `.env` locally and GitHub Secrets in CI/CD.
 * Prefer IAM roles for EC2/ECS runtime access (no long-lived keys).
-* Restrict MLflow EC2 inbound (`5000`) to your IP or VPC CIDR.
+* Restrict MLflow EC2 inbound (`5001`) to your IP or VPC CIDR.
 
 ---
 

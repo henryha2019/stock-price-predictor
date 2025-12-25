@@ -21,3 +21,5 @@ flaml==2.3.0
 torch==2.5.1
 transformers==4.46.3
 accelerate==1.1.1
+chronos-forecasting
+

@@ -3,8 +3,10 @@ set -euo pipefail
 
 # Promote a specific model version to alias "prod"
 # Usage:
-#   export MLFLOW_TRACKING_URI=http://127.0.0.1:5000
-#   python scripts/promote_model.py 12
+#   export MLFLOW_TRACKING_URI=http://127.0.0.1:5001
+#   export MODEL_NAME=stock-price-predictor
+#   export MODEL_ALIAS=prod
+#   ./scripts/promote_model.sh 12
 
 if [[ $# -ne 1 ]]; then
   echo "Usage: $0 <MODEL_VERSION>"
@@ -20,7 +22,7 @@ import os
 import mlflow
 from mlflow.tracking import MlflowClient
 
-mlflow.set_tracking_uri(os.environ.get("MLFLOW_TRACKING_URI", "http://127.0.0.1:5000"))
+mlflow.set_tracking_uri(os.environ.get("MLFLOW_TRACKING_URI", "http://127.0.0.1:5001"))
 client = MlflowClient()
 
 name = os.environ.get("MODEL_NAME", "${MODEL_NAME}")

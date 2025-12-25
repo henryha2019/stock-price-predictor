@@ -1,14 +1,19 @@
 data:
-  hf_dataset_id: "YOUR_HF_DATASET_ID_HERE"
+  hf_dataset_id: "paperswithbacktest/Stocks-Daily-Price"
   split: "train"
-  # Keep MVP small; add tickers later
   universe: ["AAPL", "MSFT", "NVDA"]
 
 mlflow:
-  tracking_uri: "http://127.0.0.1:5000"
+  tracking_uri: "http://127.0.0.1:5001"
   experiment: "stock-price-predictor"
   model_name: "stock-price-predictor"
   register: true
+
+train:
+  horizon: 1
+  n_splits: 5
+  cv_for_deep_models: false
+  use_all_features: true
 
 ridge:
   alpha: 1.0
@@ -29,5 +34,9 @@ transformer:
   num_layers: 2
 
 hf:
-  # placeholder until model chosen
-  model_id: "TBD"
+  model_id: "amazon/chronos-t5-small"
+  device: "cpu"
+  torch_dtype: "float32"
+  num_samples: 256
+  quantile: 0.5
+  min_context: 64
