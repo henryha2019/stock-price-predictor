@@ -20,6 +20,8 @@ train:
 	$(PYTHONPATH_ENV) $(BIN)/python -m src.training.train --config configs/train.yaml --model_family ridge
 
 serve:
+	MLFLOW_TRACKING_URI=http://127.0.0.1:5001 \
+	MODEL_NAME=stock-price-predictor \
 	$(PYTHONPATH_ENV) $(BIN)/uvicorn src.serving.app:app --host 0.0.0.0 --port 8000
 
 mlflow:

@@ -3,16 +3,21 @@ from __future__ import annotations
 
 import os
 import time
+import json
 from dataclasses import dataclass
-from typing import Optional, Any, List
+from typing import Optional, List
 
 import mlflow
 import numpy as np
 import pandas as pd
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
+from mlflow.tracking import MlflowClient
 
 from src.data.features import add_returns, make_tabular_features
+
+# rolling max 10 => need at least 11 rows
+MIN_FEATURE_ROWS_DEFAULT = 11
 
 
 @dataclass
@@ -21,6 +26,8 @@ class ModelState:
     model_uri: Optional[str] = None
     loaded_at_unix: Optional[float] = None
     last_error: Optional[str] = None
+    feature_cols: Optional[List[str]] = None
+    prod_run_id: Optional[str] = None
 
 
 MODEL_STATE = ModelState(loaded=False)
@@ -29,11 +36,12 @@ app = FastAPI(title="Stock Price Predictor", version="0.1.0")
 
 
 class OHLCVBar(BaseModel):
-    date: Optional[str] = Field(None, description="YYYY-MM-DD (optional)")
+    date: Optional[str] = Field(None, description="YYYY-MM-DD")
     open: float
     high: float
     low: float
     close: float
+    adj_close: float = Field(..., description="Adjusted close (required)")
     volume: float
 
 
@@ -42,15 +50,12 @@ class PredictRequest(BaseModel):
     horizon: int = Field(1, ge=1, le=30)
     as_of: Optional[str] = Field(None, description="YYYY-MM-DD (optional)")
 
-    # Minimal payload (works for basic tabular models if features are return-based)
     last_close: Optional[float] = Field(None, gt=0)
     last_returns: Optional[list[float]] = Field(None, min_length=5, max_length=240)
 
-    # Preferred payload (works for "use all features" training):
-    # Provide a trailing window of OHLCV so serving can run the same feature pipeline.
     ohlcv_window: Optional[list[OHLCVBar]] = Field(
         None,
-        description="Trailing OHLCV window (recommended). Provide >= 30 rows for rolling features.",
+        description="Trailing OHLCV window (recommended). Must include adj_close.",
     )
 
 
@@ -76,19 +81,38 @@ def _bool_env(name: str, default: bool = False) -> bool:
     return v.strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
+def _resolve_prod_run_id(model_name: str, alias: str, stage: str) -> Optional[str]:
+    client = MlflowClient()
+    try:
+        mv = client.get_model_version_by_alias(model_name, alias)
+        return mv.run_id
+    except Exception:
+        pass
+
+    try:
+        latest = client.get_latest_versions(model_name, stages=[stage])
+        if latest:
+            return latest[0].run_id
+    except Exception:
+        pass
+
+    return None
+
+
+def _load_feature_cols_from_run(run_id: str) -> Optional[List[str]]:
+    try:
+        local_path = mlflow.artifacts.download_artifacts(run_id=run_id, artifact_path="feature_cols.json")
+        with open(local_path, "r") as f:
+            obj = json.load(f)
+        cols = obj.get("feature_cols")
+        if isinstance(cols, list) and cols:
+            return cols
+    except Exception:
+        return None
+    return None
+
+
 def load_production_model() -> None:
-    """
-    Loads an MLflow model from Model Registry.
-
-    Required env vars:
-      - MLFLOW_TRACKING_URI (e.g., http://<mlflow-host>:5001)
-      - MODEL_NAME (e.g., stock-price-predictor)
-
-    Optional:
-      - MODEL_ALIAS (default: "prod")          # preferred
-      - MODEL_STAGE (fallback: "Production")  # if stages are used instead of aliases
-      - SKIP_MODEL_LOAD=1                     # for CI/tests
-    """
     if _bool_env("SKIP_MODEL_LOAD", default=False):
         MODEL_STATE.loaded = False
         MODEL_STATE.last_error = "SKIP_MODEL_LOAD=1 (model load skipped)"
@@ -102,7 +126,6 @@ def load_production_model() -> None:
 
         mlflow.set_tracking_uri(tracking_uri)
 
-        # Prefer alias-based deployment. Fallback to stage-based.
         model_uri = f"models:/{model_name}@{model_alias}"
         try:
             model = mlflow.pyfunc.load_model(model_uri)
@@ -110,11 +133,24 @@ def load_production_model() -> None:
             model_uri = f"models:/{model_name}/{model_stage}"
             model = mlflow.pyfunc.load_model(model_uri)
 
+        # Resolve prod run_id and load feature order from that run
+        prod_run_id = _resolve_prod_run_id(model_name, model_alias, model_stage)
+        feature_cols = _load_feature_cols_from_run(prod_run_id) if prod_run_id else None
+
         app.state.model = model
         MODEL_STATE.loaded = True
         MODEL_STATE.model_uri = model_uri
         MODEL_STATE.loaded_at_unix = time.time()
         MODEL_STATE.last_error = None
+        MODEL_STATE.prod_run_id = prod_run_id
+        MODEL_STATE.feature_cols = feature_cols
+
+        # If feature_cols is missing, fail fast: this avoids silent wrong predictions
+        if not MODEL_STATE.feature_cols:
+            raise RuntimeError(
+                f"feature_cols.json not found for deployed model run_id={prod_run_id}. "
+                f"Retrain and ensure feature_cols.json is logged in the SAME run that registers the model."
+            )
 
     except Exception as e:
         MODEL_STATE.loaded = False
@@ -124,7 +160,6 @@ def load_production_model() -> None:
 
 @app.on_event("startup")
 def on_startup() -> None:
-    # Fail fast in prod. For CI/tests, set SKIP_MODEL_LOAD=1
     load_production_model()
 
 
@@ -141,99 +176,63 @@ def ready():
         "status": "ready",
         "model_uri": MODEL_STATE.model_uri,
         "loaded_at_unix": MODEL_STATE.loaded_at_unix,
+        "prod_run_id": MODEL_STATE.prod_run_id,
+        "has_feature_cols": bool(MODEL_STATE.feature_cols),
     }
-
-
-def _coerce_input_schema_columns(model: Any) -> Optional[List[str]]:
-    """
-    Best-effort: read MLflow input schema column names if present.
-    If not available, return None.
-    """
-    try:
-        schema = model.metadata.get_input_schema()
-        if schema is None:
-            return None
-        cols = []
-        for c in schema.inputs():
-            cols.append(c.name)
-        return cols or None
-    except Exception:
-        return None
 
 
 def _build_df_from_ohlcv_window(symbol: str, window: list[OHLCVBar]) -> pd.DataFrame:
     df = pd.DataFrame([b.model_dump() for b in window])
     df["symbol"] = symbol
-    if "date" in df.columns:
-        df["date"] = pd.to_datetime(df["date"], errors="coerce")
-    else:
-        df["date"] = pd.NaT
+    df["date"] = pd.to_datetime(df["date"], errors="coerce")
 
-    # Ensure required columns exist
-    for col in ["open", "high", "low", "close", "volume"]:
-        if col not in df.columns:
-            raise ValueError(f"Missing '{col}' in ohlcv_window.")
-    df = df.dropna(subset=["close"]).copy()
+    required = ["open", "high", "low", "close", "adj_close", "volume", "symbol", "date"]
+    missing = [c for c in required if c not in df.columns]
+    if missing:
+        raise ValueError(f"Missing required columns in ohlcv_window: {missing}")
+
+    df = df.dropna(subset=["adj_close", "date"]).copy()
     return df
 
 
-def build_features_from_ohlcv_window(symbol: str, window: list[OHLCVBar], horizon: int) -> pd.DataFrame:
-    """
-    Runs the SAME feature pipeline used in training (add_returns + make_tabular_features)
-    on the provided OHLCV window, then returns:
-      - a multi-row DF (sequence-friendly)
-    """
+def build_features_from_ohlcv_window(symbol: str, window: list[OHLCVBar], price_col: str = "adj_close") -> pd.DataFrame:
     df = _build_df_from_ohlcv_window(symbol, window)
+    df = df.sort_values(["symbol", "date"]).reset_index(drop=True)
 
-    df = add_returns(df, price_col="close", group_col="symbol")
-    df = make_tabular_features(df, group_col="symbol")
+    df = add_returns(df, price_col=price_col, group_col="symbol")
+    df = make_tabular_features(df, group_col="symbol", price_col=price_col)
 
-    # Training sets target as shift(-horizon) of log_return_1, but for inference we only need features.
-    df["horizon"] = int(horizon)
-
-    # Drop rows that have NaNs from rolling features
-    df = df.replace([np.inf, -np.inf], np.nan)
-    df = df.dropna(axis=0).reset_index(drop=True)
-
+    df = df.replace([np.inf, -np.inf], np.nan).dropna(axis=0).reset_index(drop=True)
     if len(df) == 0:
         raise ValueError("After feature engineering, no usable rows remain. Provide a longer ohlcv_window.")
     return df
 
 
-def build_minimal_features_from_returns(last_close: float, last_returns: list[float], horizon: int) -> pd.DataFrame:
+def _to_model_features(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Minimal fall-back features if you don't provide OHLCV.
-    Works only for models trained on return-only columns.
+    Convert engineered DF to model input:
+    - numeric columns only
+    - drop symbol/date/target if present
     """
-    r = np.array(last_returns, dtype=float)
-
-    feats = {
-        "r_mean_5": float(np.mean(r[-5:])),
-        "r_std_5": float(np.std(r[-5:], ddof=1)) if len(r[-5:]) > 1 else 0.0,
-        "r_mean_20": float(np.mean(r[-20:])),
-        "r_std_20": float(np.std(r[-20:], ddof=1)) if len(r[-20:]) > 1 else 0.0,
-        "r_last": float(r[-1]),
-        "last_close": float(last_close),
-        "horizon": int(horizon),
-    }
-    return pd.DataFrame([feats])
+    drop_cols = [c for c in ["date", "symbol", "target"] if c in df.columns]
+    out = df.drop(columns=drop_cols, errors="ignore")
+    out = out.select_dtypes(include=["number"]).copy()
+    out = out.replace([np.inf, -np.inf], np.nan).dropna(axis=0)
+    if len(out) == 0:
+        raise ValueError("No numeric feature rows after cleaning (NaNs/infs).")
+    return out
 
 
-def _align_to_expected_columns(X: pd.DataFrame, expected_cols: Optional[List[str]]) -> pd.DataFrame:
+def _align_exact_order(X: pd.DataFrame, feature_cols: List[str]) -> pd.DataFrame:
     """
-    If the model has an input schema, enforce those columns:
-      - add missing columns as 0.0
-      - drop extra columns
-      - reorder
-    If no schema is available, return X unchanged.
+    Enforce exact columns and order used at training time.
+    Missing cols -> fill 0. Extra cols -> drop.
     """
-    if not expected_cols:
-        return X
     out = X.copy()
-    for c in expected_cols:
+    for c in feature_cols:
         if c not in out.columns:
             out[c] = 0.0
-    out = out[expected_cols]
+    out = out[feature_cols]
     return out
 
 
@@ -243,42 +242,59 @@ def predict(req: PredictRequest):
         raise HTTPException(status_code=503, detail=f"Model not loaded: {MODEL_STATE.last_error}")
 
     model = app.state.model
-    expected_cols = _coerce_input_schema_columns(model)
 
-    # Strategy:
-    # 1) If OHLCV window provided, build full feature DF and try predict on a multi-row window (sequence mode)
-    # 2) If that fails, try last row only (tabular mode)
-    # 3) If no OHLCV window, use minimal return features (tabular mode)
+    min_rows = int(os.getenv("MIN_OHLCV_WINDOW", str(MIN_FEATURE_ROWS_DEFAULT)))
+    allow_minimal = _bool_env("ALLOW_MINIMAL_RETURNS_MODE", default=False)
+
     try:
-        if req.ohlcv_window and len(req.ohlcv_window) >= int(os.getenv("MIN_OHLCV_WINDOW", "30")):
-            feats_df = build_features_from_ohlcv_window(req.symbol, req.ohlcv_window, req.horizon)
+        if req.ohlcv_window is not None:
+            if len(req.ohlcv_window) < min_rows:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"ohlcv_window must contain at least {min_rows} rows (needed for rolling features).",
+                )
 
-            # Sequence attempt: pass the whole window (some pyfuncs expect multi-row)
-            X_seq = _align_to_expected_columns(feats_df, expected_cols)
-            try:
-                y_hat = model.predict(X_seq)
-                used_mode = "sequence"
-            except Exception:
-                # Tabular fallback: last row
-                X_tab = X_seq.tail(1).copy()
-                y_hat = model.predict(X_tab)
-                used_mode = "tabular_from_window"
+            feats_df = build_features_from_ohlcv_window(req.symbol, req.ohlcv_window, price_col="adj_close")
+            X_seq = _to_model_features(feats_df)
+
+            # enforce training feature order
+            X_seq = _align_exact_order(X_seq, MODEL_STATE.feature_cols or [])
+
+            X_tab = X_seq.tail(1).copy()    
+            X_tab = X_tab.apply(pd.to_numeric, errors="coerce").astype("float64")
+            y_hat = model.predict(X_tab)
 
             pred_return = float(np.array(y_hat).reshape(-1)[0])
 
-            # Determine last_close for price conversion
-            last_close = float(req.ohlcv_window[-1].close)
-            pred_price = float(last_close * np.exp(pred_return))
+            last_adj_close = float(req.ohlcv_window[-1].adj_close)
+            pred_price = float(last_adj_close * np.exp(pred_return))
+            used_mode = "tabular_from_window_adj_close"
+
         else:
-            # Minimal / fallback mode
-            if req.last_close is None or req.last_returns is None:
+            if not allow_minimal:
                 raise HTTPException(
                     status_code=422,
-                    detail="Provide either ohlcv_window (recommended) or both last_close + last_returns.",
+                    detail="This deployed model requires ohlcv_window with adj_close. Minimal mode is disabled.",
                 )
 
-            X = build_minimal_features_from_returns(float(req.last_close), req.last_returns, req.horizon)
-            X = _align_to_expected_columns(X, expected_cols)
+            if req.last_close is None or req.last_returns is None:
+                raise HTTPException(status_code=422, detail="Provide last_close + last_returns.")
+
+            r = np.array(req.last_returns, dtype=float)
+
+            # Minimal mode is ONLY valid if your deployed model was trained on these columns.
+            feats = {
+                "r_mean_5": float(np.mean(r[-5:])),
+                "r_std_5": float(np.std(r[-5:], ddof=1)) if len(r[-5:]) > 1 else 0.0,
+                "r_mean_10": float(np.mean(r[-10:])),
+                "r_std_10": float(np.std(r[-10:], ddof=1)) if len(r[-10:]) > 1 else 0.0,
+                "r_last": float(r[-1]),
+                "last_close": float(req.last_close),
+            }
+            X = pd.DataFrame([feats])
+
+            # enforce training feature order
+            X = _align_exact_order(X, MODEL_STATE.feature_cols or [])
 
             y_hat = model.predict(X)
             pred_return = float(np.array(y_hat).reshape(-1)[0])
