@@ -18,7 +18,7 @@ artifacts/
 mlflow.db
 
 # Data
-data/
+/data/
 *.parquet
 *.csv
 
