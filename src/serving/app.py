@@ -171,6 +171,16 @@ def health():
 
 @app.get("/ready")
 def ready():
+    if os.getenv("SKIP_MODEL_LOAD") == "1":
+        return {
+            "status": "ready",
+            "mode": "ci",
+            "model_uri": MODEL_STATE.model_uri,
+            "loaded_at_unix": MODEL_STATE.loaded_at_unix,
+            "prod_run_id": MODEL_STATE.prod_run_id,
+            "has_feature_cols": bool(MODEL_STATE.feature_cols),
+            "note": "SKIP_MODEL_LOAD=1, readiness does not require model load",
+        }
     if not MODEL_STATE.loaded:
         raise HTTPException(status_code=503, detail={"status": "not_ready", "error": MODEL_STATE.last_error})
     return {
