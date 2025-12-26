@@ -34,3 +34,59 @@ jobs:
           SKIP_MODEL_LOAD: "1"
         run: |
           pytest -q
+
+  docker-smoke:
+    name: Docker smoke test (FastAPI boots)
+    runs-on: ubuntu-latest
+    needs: [ test ]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build image
+        run: |
+          docker build -f docker/Dockerfile -t stock-price-predictor:ci .
+
+      - name: Run container
+        run: |
+          docker run -d --rm \
+            --name spp_api \
+            -p 8000:8000 \
+            -e PYTHONPATH=. \
+            -e SKIP_MODEL_LOAD=1 \
+            -e MLFLOW_TRACKING_URI=http://127.0.0.1:5001 \
+            -e MODEL_NAME=stock-price-predictor \
+            -e MODEL_ALIAS=prod \
+            stock-price-predictor:ci
+
+      - name: Wait for API
+        run: |
+          set -e
+          for i in {1..30}; do
+            if curl -fsS http://127.0.0.1:8000/health >/dev/null; then
+              echo "API is up"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "API did not become healthy in time"
+          docker logs spp_api
+          exit 1
+
+      - name: Smoke check endpoints
+        run: |
+          set -e
+          curl -fsS http://127.0.0.1:8000/health
+          # /ready may depend on your implementation; if it returns non-200 in SKIP_MODEL_LOAD mode, change to `|| true`.
+          curl -fsS http://127.0.0.1:8000/ready
+
+      - name: Print logs on failure
+        if: failure()
+        run: |
+          docker logs spp_api
+
+      - name: Stop container
+        if: always()
+        run: |
+          docker stop spp_api || true

@@ -1,8 +1,10 @@
-name: Deploy to ECS
-
 on:
-  push:
-    branches: [ main ]
+  workflow_dispatch:
+    inputs:
+      deploy:
+        description: "Deploy to ECS"
+        required: true
+        default: "true"
 
 permissions:
   contents: read
