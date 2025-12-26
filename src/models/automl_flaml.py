@@ -4,7 +4,6 @@ from typing import Any, Dict
 
 import mlflow
 import mlflow.pyfunc
-import numpy as np
 import pandas as pd
 from flaml import AutoML
 

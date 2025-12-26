@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 import mlflow
 import mlflow.pyfunc
@@ -17,6 +17,32 @@ from src.models.common import (
 )
 from src.training.registry import register_model
 
+def _make_chronos_input_example(
+    X: pd.DataFrame,
+    feature_cols: list[str],
+    price_col: str,
+    min_context: int,
+) -> pd.DataFrame:
+    """
+    Build an MLflow input_example that will pass Chronos min_context validation.
+    Uses the last min_context *valid* price points, and returns the corresponding
+    tabular rows (all feature_cols) aligned by index.
+    """
+    if price_col not in X.columns:
+        return X.tail(min_context).copy()
+
+    s = pd.to_numeric(X[price_col], errors="coerce")
+    s = s.replace([np.inf, -np.inf], np.nan).dropna()
+
+    if len(s) >= min_context:
+        idx = s.index[-min_context:]
+        ex = X.loc[idx, feature_cols].copy()
+    else:
+        # fallback: still return something deterministic
+        ex = X.tail(min_context).copy()
+
+    # MLflow likes plain dtypes; keep it numeric
+    return ex.replace([np.inf, -np.inf], np.nan).dropna(axis=1, how="all")
 
 def _pick_price_col(df: pd.DataFrame) -> str:
     for c in ("adj_close", "close", "price"):
@@ -96,28 +122,49 @@ class HFFineTuneModel:
                 def predict(self, context, model_input: pd.DataFrame):
                     if self.price_col not in model_input.columns:
                         raise ValueError(f"Missing required price column: {self.price_col}")
-                    series = model_input[self.price_col].to_numpy(dtype=np.float32)
-                    if len(series) < self.min_context:
-                        raise ValueError(f"Need at least min_context={self.min_context} rows for Chronos.")
-                    # Chronos expects batch of series
+                    s = pd.to_numeric(model_input[self.price_col], errors="coerce")
+                    s = s.replace([np.inf, -np.inf], np.nan).dropna()
+                    series_np = s.to_numpy(dtype=np.float32)
+
+                    if len(series_np) < self.min_context:
+                        raise ValueError(f"Need at least min_context={self.min_context} valid rows for Chronos.")
+
+                    # Chronos expects torch.Tensor contexts
+                    series_t = torch.tensor(series_np, dtype=torch.float32)
+
                     forecast = self.pipeline.predict(
-                        [series],
+                        [series_t],
                         prediction_length=self.horizon,
                         num_samples=self.num_samples,
-                    )[0]  # shape: (num_samples, horizon)
+                    )[0]
                     # Use quantile point forecast
-                    q = np.quantile(forecast, self.quantile, axis=0)
-                    # Return predicted log-return proxy for last step (align with your system contract)
-                    return np.array([float(q[-1])], dtype=float)
+                    q = np.quantile(forecast, self.quantile, axis=0)  # predicted price path
+                    pred_price = float(q[-1])
+
+                    last_price = float(series_np[-1])
+                    # log-return consistent with app.py: pred_price = last_price * exp(pred_return)
+                    pred_return = float(np.log(max(pred_price, 1e-12) / max(last_price, 1e-12)))
+
+                    return np.array([pred_return], dtype=float)
 
             py_model = _ChronosPyfunc(pipe, price_col, horizon, num_samples, quantile, min_context)
 
             # Signature should allow the same tabular DF you send in serving.
             sig_kwargs = infer_and_log_signature(Xtr_df, y_train, artifact_path=artifact_path)
 
+            # Ensure MLflow's input example has enough valid context for Chronos validation
+            input_ex = _make_chronos_input_example(
+                Xtr_df,
+                feature_cols=feature_cols,
+                price_col=price_col,
+                min_context=min_context,
+            )
+            sig_kwargs.pop("input_example", None)
+
             mlflow.pyfunc.log_model(
                 artifact_path=artifact_path,
                 python_model=py_model,
+                input_example=input_ex, 
                 pip_requirements=[
                     "mlflow==2.19.0",
                     "pandas",

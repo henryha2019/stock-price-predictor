@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Tuple
 
 import mlflow
 import mlflow.pyfunc
@@ -56,7 +56,6 @@ class CustomTransformerModel:
 
         feature_cols = get_feature_cols_from_cfg(cfg)
         Xtr_df = coerce_features_float64(X_train, feature_cols)
-        Xva_df = coerce_features_float64(X_val, feature_cols) if X_val is not None else None
 
         tcfg = cfg.get("transformer", {})
         seq_len = int(tcfg.get("seq_len", 30))
@@ -130,10 +129,13 @@ class CustomTransformerModel:
 
             # Signature should match the TABULAR input you send at inference
             sig_kwargs = infer_and_log_signature(Xtr_df, y_train, artifact_path=artifact_path)
+            input_example = Xtr_df.tail(seq_len).copy()
+            sig_kwargs.pop("input_example", None)
 
             mlflow.pyfunc.log_model(
                 artifact_path=artifact_path,
                 python_model=_TxPyfunc(model, seq_len=seq_len),
+                input_example=input_example,
                 pip_requirements=[
                     "mlflow==2.19.0",
                     "pandas",

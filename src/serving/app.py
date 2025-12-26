@@ -4,6 +4,8 @@ from __future__ import annotations
 import os
 import time
 import json
+import logging
+import traceback
 from dataclasses import dataclass
 from typing import Optional, List
 
@@ -31,6 +33,7 @@ class ModelState:
 
 
 MODEL_STATE = ModelState(loaded=False)
+logger = logging.getLogger("uvicorn.error")
 
 app = FastAPI(title="Stock Price Predictor", version="0.1.0")
 
@@ -133,7 +136,6 @@ def load_production_model() -> None:
             model_uri = f"models:/{model_name}/{model_stage}"
             model = mlflow.pyfunc.load_model(model_uri)
 
-        # Resolve prod run_id and load feature order from that run
         prod_run_id = _resolve_prod_run_id(model_name, model_alias, model_stage)
         feature_cols = _load_feature_cols_from_run(prod_run_id) if prod_run_id else None
 
@@ -145,7 +147,6 @@ def load_production_model() -> None:
         MODEL_STATE.prod_run_id = prod_run_id
         MODEL_STATE.feature_cols = feature_cols
 
-        # If feature_cols is missing, fail fast: this avoids silent wrong predictions
         if not MODEL_STATE.feature_cols:
             raise RuntimeError(
                 f"feature_cols.json not found for deployed model run_id={prod_run_id}. "
@@ -209,11 +210,6 @@ def build_features_from_ohlcv_window(symbol: str, window: list[OHLCVBar], price_
 
 
 def _to_model_features(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Convert engineered DF to model input:
-    - numeric columns only
-    - drop symbol/date/target if present
-    """
     drop_cols = [c for c in ["date", "symbol", "target"] if c in df.columns]
     out = df.drop(columns=drop_cols, errors="ignore")
     out = out.select_dtypes(include=["number"]).copy()
@@ -224,16 +220,19 @@ def _to_model_features(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _align_exact_order(X: pd.DataFrame, feature_cols: List[str]) -> pd.DataFrame:
-    """
-    Enforce exact columns and order used at training time.
-    Missing cols -> fill 0. Extra cols -> drop.
-    """
     out = X.copy()
     for c in feature_cols:
         if c not in out.columns:
             out[c] = 0.0
     out = out[feature_cols]
     return out
+
+
+def _coerce_float64(X: pd.DataFrame) -> pd.DataFrame:
+    out = X.copy()
+    for c in out.columns:
+        out[c] = pd.to_numeric(out[c], errors="coerce")
+    return out.astype("float64")
 
 
 @app.post("/predict", response_model=PredictResponse)
@@ -256,14 +255,10 @@ def predict(req: PredictRequest):
 
             feats_df = build_features_from_ohlcv_window(req.symbol, req.ohlcv_window, price_col="adj_close")
             X_seq = _to_model_features(feats_df)
-
-            # enforce training feature order
             X_seq = _align_exact_order(X_seq, MODEL_STATE.feature_cols or [])
+            X_tab = _coerce_float64(X_seq.tail(min_rows).copy())
 
-            X_tab = X_seq.tail(1).copy()    
-            X_tab = X_tab.apply(pd.to_numeric, errors="coerce").astype("float64")
             y_hat = model.predict(X_tab)
-
             pred_return = float(np.array(y_hat).reshape(-1)[0])
 
             last_adj_close = float(req.ohlcv_window[-1].adj_close)
@@ -282,7 +277,6 @@ def predict(req: PredictRequest):
 
             r = np.array(req.last_returns, dtype=float)
 
-            # Minimal mode is ONLY valid if your deployed model was trained on these columns.
             feats = {
                 "r_mean_5": float(np.mean(r[-5:])),
                 "r_std_5": float(np.std(r[-5:], ddof=1)) if len(r[-5:]) > 1 else 0.0,
@@ -292,9 +286,8 @@ def predict(req: PredictRequest):
                 "last_close": float(req.last_close),
             }
             X = pd.DataFrame([feats])
-
-            # enforce training feature order
             X = _align_exact_order(X, MODEL_STATE.feature_cols or [])
+            X = _coerce_float64(X)
 
             y_hat = model.predict(X)
             pred_return = float(np.array(y_hat).reshape(-1)[0])
@@ -304,7 +297,14 @@ def predict(req: PredictRequest):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Inference failed: {e}")
+        logger.error("Inference failed: %s\n%s", repr(e), traceback.format_exc())
+        msg = str(e).strip()
+        if not msg:
+            msg = repr(e)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Inference failed ({type(e).__name__}): {msg}",
+        )
 
     return PredictResponse(
         pred_return=pred_return,

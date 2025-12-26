@@ -4,7 +4,7 @@ set -euo pipefail
 TRACKING_URI="${MLFLOW_TRACKING_URI:-http://127.0.0.1:5001}"
 MODEL_NAME="${MODEL_NAME:-stock-price-predictor}"
 PORT="${PORT:-8000}"
-PAYLOAD="${PAYLOAD:-payloads/ohlcv_11.json}"
+PAYLOAD="${PAYLOAD:-payloads/ohlcv_64.json}"
 
 export MLFLOW_TRACKING_URI="$TRACKING_URI"
 
@@ -40,7 +40,7 @@ run_one () {
   python scripts/set_alias.py --model-name "$MODEL_NAME" --alias "$alias" --version "${version:-}" --run-id "$run_id"
 
   # Start server with chosen alias
-  MODEL_ALIAS="$alias" MODEL_NAME="$MODEL_NAME" MIN_OHLCV_WINDOW=11 \
+  MODEL_ALIAS="$alias" MODEL_NAME="$MODEL_NAME" MIN_OHLCV_WINDOW=64 \
   PYTHONPATH=. .venv/bin/uvicorn src.serving.app:app --host 127.0.0.1 --port "$PORT" &
   pid=$!
 
