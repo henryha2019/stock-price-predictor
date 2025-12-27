@@ -1,52 +1,88 @@
-variable "aws_region" { type = string }
+variable "project_name" {
+  description = "Project name prefix for resources"
+  type        = string
+  default     = "stock-price-predictor"
+}
 
-variable "project_name" { type = string default = "stock-price-predictor" }
+variable "aws_region" {
+  description = "AWS region, e.g. us-west-2"
+  type        = string
+}
 
-variable "vpc_id" { type = string }
-variable "public_subnet_id" { type = string }
+variable "vpc_id" {
+  description = "VPC ID"
+  type        = string
+}
 
-variable "mlflow_instance_type" { type = string default = "t3.small" }
-variable "mlflow_key_name" { type = string } # existing EC2 keypair name
-
-variable "allowed_ssh_cidr" { type = string }     # e.g., "YOUR_PUBLIC_IP/32"
-variable "allowed_mlflow_cidr" { type = string }  # e.g., "YOUR_PUBLIC_IP/32" or VPC CIDR
-
-# --- Networking for ALB + ECS ---
 variable "public_subnet_ids" {
+  description = "Two+ public subnet IDs (for ALB/ECS)"
   type        = list(string)
-  description = "Public subnets for ALB (and ECS if you keep tasks public for MVP)."
 }
 
-# For MVP, you can run ECS tasks in public subnets with public IPs.
-# For a more production setup, use private subnets + NAT and set assign_public_ip=false.
-variable "ecs_subnet_ids" {
-  type        = list(string)
-  description = "Subnets where ECS tasks will run."
+variable "public_subnet_id" {
+  description = "A single public subnet ID (for MLflow EC2)"
+  type        = string
 }
 
-# --- ECS service config ---
-variable "ecs_desired_count" {
-  type    = number
-  default = 1
+variable "allowed_ssh_cidr" {
+  description = "CIDR allowed to SSH to EC2 (your IP/32)"
+  type        = string
 }
 
-variable "container_port" {
-  type    = number
-  default = 8000
+variable "allowed_mlflow_cidr" {
+  description = "CIDR allowed to access MLflow UI/API (your IP/32)"
+  type        = string
 }
 
-variable "task_cpu" {
-  type    = number
-  default = 256
+variable "mlflow_key_name" {
+  description = "EC2 key pair name for MLflow instance"
+  type        = string
 }
 
-variable "task_memory" {
-  type    = number
-  default = 512
+variable "mlflow_port" {
+  description = "MLflow server port"
+  type        = number
+  default     = 5000
 }
 
-variable "image_tag" {
+variable "api_container_port" {
+  description = "FastAPI container port"
+  type        = number
+  default     = 8000
+}
+
+variable "api_desired_count" {
+  description = "Desired number of ECS tasks"
+  type        = number
+  default     = 1
+}
+
+variable "api_cpu" {
+  description = "Fargate CPU units"
+  type        = number
+  default     = 512
+}
+
+variable "api_memory" {
+  description = "Fargate memory (MiB)"
+  type        = number
+  default     = 1024
+}
+
+variable "api_image_tag" {
+  description = "ECR image tag used by ECS (you can keep latest, or set to git SHA)"
   type        = string
   default     = "latest"
-  description = "Default tag Terraform deploys. CI/CD will override this with git SHA."
+}
+
+variable "model_name" {
+  description = "MLflow registered model name"
+  type        = string
+  default     = "stock-price-predictor"
+}
+
+variable "model_alias" {
+  description = "MLflow alias to serve (e.g., prod)"
+  type        = string
+  default     = "prod"
 }

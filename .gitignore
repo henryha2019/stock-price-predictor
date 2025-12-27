@@ -32,12 +32,20 @@ logs/
 .vscode/
 .idea/
 
-# Secrets
+# Secrets & credentials
 .env
 .env.*
 *.pem
 *.key
 terraform.tfvars
+
+# Terraform
+.terraform/
+.terraform.lock.hcl
+terraform.tfstate
+terraform.tfstate.*
+crash.log
+crash.*.log
 
 # Docker
 *.log

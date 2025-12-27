@@ -1,20 +1,30 @@
-aws_region         = "us-west-2"
-project_name       = "stock-price-predictor"
+project_name = "stock-price-predictor"
+aws_region   = "us-west-2"
 
-vpc_id             = "vpc-xxxxxxxx"
-public_subnet_id   = "subnet-xxxxxxxx"
+vpc_id = "vpc-xxxxxxxxxxxxxxxxx"
 
-mlflow_key_name    = "your-ec2-keypair-name"
+# Two public subnets for ALB/ECS (prefer different AZs)
+public_subnet_ids = [
+  "subnet-aaaaaaaaaaaaaaaaa",
+  "subnet-bbbbbbbbbbbbbbbbb"
+]
 
-allowed_ssh_cidr   = "YOUR_PUBLIC_IP/32"
-allowed_mlflow_cidr= "YOUR_PUBLIC_IP/32"
+# One public subnet for the MLflow EC2 instance (pick one of the above)
+public_subnet_id = "subnet-aaaaaaaaaaaaaaaaa"
 
-public_subnet_ids = ["subnet-aaaaaaa", "subnet-bbbbbbb"]
-ecs_subnet_ids    = ["subnet-aaaaaaa", "subnet-bbbbbbb"]
+# Your IP with /32
+allowed_ssh_cidr    = "YOUR_PUBLIC_IP/32"
+allowed_mlflow_cidr = "YOUR_PUBLIC_IP/32"
 
-ecs_desired_count = 1
-container_port    = 8000
-task_cpu          = 256
-task_memory       = 512
+# Existing EC2 key pair name in this region
+mlflow_key_name = "your-keypair-name"
 
-image_tag         = "latest"
+# Optional overrides
+mlflow_port        = 5000
+api_image_tag      = "latest"
+api_desired_count  = 1
+api_cpu            = 512
+api_memory         = 1024
+
+model_name  = "stock-price-predictor"
+model_alias = "prod"
