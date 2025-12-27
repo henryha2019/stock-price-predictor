@@ -226,19 +226,33 @@ resource "aws_instance" "mlflow" {
   key_name                    = var.mlflow_key_name
   associate_public_ip_address = true
   iam_instance_profile        = aws_iam_instance_profile.mlflow_profile.name
-  tags                        = merge(local.common_tags, { Name = "${local.name}-mlflow" })
+
+  # Optional but recommended so Terraform re-runs user_data when you change it
+  user_data_replace_on_change = true
+
+  tags = merge(local.common_tags, { Name = "${local.name}-mlflow" })
 
   user_data = <<-EOF
     #!/bin/bash
     set -euxo pipefail
 
+    # Base packages
     dnf update -y
     dnf install -y python3 python3-pip
 
-    pip3 install --upgrade pip
-    pip3 install "mlflow>=2.9.0" boto3
+    # Create service user (idempotent)
+    id -u mlflow >/dev/null 2>&1 || useradd --system --create-home mlflow
 
+    # Directories
     mkdir -p /opt/mlflow
+    chown -R mlflow:mlflow /opt/mlflow
+
+    # Dedicated virtualenv to avoid breaking system awscli deps
+    python3 -m venv /opt/mlflow/venv
+    /opt/mlflow/venv/bin/python -m pip install --upgrade pip setuptools wheel
+    /opt/mlflow/venv/bin/python -m pip install "mlflow>=2.9.0" boto3
+
+    # Systemd unit
     cat >/etc/systemd/system/mlflow.service <<SYSTEMD
     [Unit]
     Description=MLflow Tracking Server
@@ -246,25 +260,37 @@ resource "aws_instance" "mlflow" {
 
     [Service]
     Type=simple
-    Restart=always
-    RestartSec=5
+    User=mlflow
+    Group=mlflow
     WorkingDirectory=/opt/mlflow
-    Environment=MLFLOW_S3_ENDPOINT_URL=
-    ExecStart=/usr/local/bin/mlflow server \
+
+    Environment=PATH=/opt/mlflow/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+    ExecStart=/opt/mlflow/venv/bin/python -m mlflow server \
       --host 0.0.0.0 \
       --port ${var.mlflow_port} \
       --backend-store-uri sqlite:////opt/mlflow/mlflow.db \
       --default-artifact-root s3://${aws_s3_bucket.mlflow_artifacts.bucket}/
+
+    Restart=always
+    RestartSec=5
 
     [Install]
     WantedBy=multi-user.target
     SYSTEMD
 
     systemctl daemon-reload
-    systemctl enable mlflow
-    systemctl start mlflow
+    systemctl enable --now mlflow
+    systemctl status mlflow --no-pager || true
+    ss -lntp | grep :${var.mlflow_port} || true
   EOF
+
+  depends_on = [
+    aws_s3_bucket.mlflow_artifacts,
+    aws_iam_instance_profile.mlflow_profile
+  ]
 }
+
 
 # -----------------------------
 # ECR: container registry
