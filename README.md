@@ -1,5 +1,6 @@
 # Stock Price Predictor
-**Production-Grade ML Deployment Pipeline with CI/CD, Model Registry, and Cloud Infrastructure**
+
+**Production-Grade MLOps System with MLflow Registry, AWS Infrastructure, and CI-Validated Serving**
 
 ![Python](https://img.shields.io/badge/python-3.11%2B-blue)
 ![FastAPI](https://img.shields.io/badge/FastAPI-production-green)
@@ -8,103 +9,190 @@
 ![Terraform](https://img.shields.io/badge/Terraform-IaC-844FBA)
 ![Docker](https://img.shields.io/badge/Docker-containerized-blue)
 ![CI](https://img.shields.io/badge/GitHub_Actions-CI-black)
-![CD](https://img.shields.io/badge/GitHub_Actions-CD-black)
+![CD](https://img.shields.io/badge/Deployment-manual-orange)
 
 ---
 
 ## Overview
 
-**Stock Price Predictor** is a **production-oriented MLOps project** that demonstrates the full ML lifecycle:
+**Stock Price Predictor** is a **production-style MLOps project** that demonstrates how to **train, register, promote, and serve machine learning models reliably** using modern infrastructure and tooling.
 
-- reproducible training
-- model registry & versioning (MLflow)
-- automated deployment (GitHub Actions → AWS ECS)
-- infrastructure as code (Terraform)
-- online inference (FastAPI) with health/readiness
+The focus is **operational correctness**, not speculative financial claims:
 
-The project is scoped to **operational excellence** rather than speculative financial claims. Models forecast **short-horizon returns** and are deployed as a real service.
+* reproducible training
+* centralized MLflow registry
+* alias-based model promotion (`@prod`)
+* containerized FastAPI inference
+* infrastructure as code (Terraform)
+* CI-validated serving paths
+* manual, cost-controlled AWS deployment
+
+Models forecast **short-horizon log returns** and are exposed through a real HTTP API behind a load balancer.
+
+---
+
+## Proof of Deployment (Selected Evidence)
+
+The following screenshots demonstrate that the system is fully deployed and operational.
+
+### AWS FastAPI Inference (Live)
+
+- Request routed through **Application Load Balancer**
+- **ECS-hosted FastAPI** service responding
+- Model loaded from **MLflow registry (`@prod`)**
+- End-to-end prediction succeeds
+
+![AWS FastAPI Prediction via ALB](docs/images/aws-fastapi-predict.png)
+
+---
+
+### MLflow Model Registry (Production Alias)
+
+- Model registered under a single logical name
+- Alias-based promotion (`@prod`) in use
+- Serving layer resolves models dynamically via registry
+
+![MLflow Model Registry with prod Alias](docs/images/mlflow-registry-prod.png)
+
+---
+
+## Prerequisites
+
+Local development requires:
+
+* Python **3.11+**
+* `make`
+* Docker
+* Git
+
+AWS deployment additionally requires:
+
+* AWS CLI (configured; `aws sts get-caller-identity` succeeds)
+* Terraform **>= 1.5**
+* An AWS account with permission to create:
+
+  * EC2
+  * ECS
+  * ECR
+  * ALB
+  * S3
+  * IAM roles
+
+**No cloud resources are required for local development.**
+
+---
+
+## Initial Setup (One-Time)
+
+Clone the repository and create a virtual environment:
+
+```bash
+git clone https://github.com/<your-handle>/stock-price-predictor.git
+cd stock-price-predictor
+
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+Verify tooling and environment:
+
+```bash
+make lint
+make test
+```
+
+You are now ready to proceed with either:
+
+* **Runbook A — Local Development & Deployment**, or
+* **Runbook B — AWS Production Deployment**
 
 ---
 
 ## Key Capabilities
 
 ### End-to-End ML Lifecycle
-- Offline training with time-aware splits (walk-forward / holdout)
-- Centralized **MLflow model registry**
-- Model promotion via alias (`prod`)
-- Immutable Docker images for inference
 
-### Multi-Model Training (Single Serving Interface)
-Train and compare multiple model families under one pipeline:
-- **Ridge** (interpretable baseline)
-- **AutoML** (FLAML)
-- **Custom Transformer** (PyTorch)
-- **HF Foundation Model** (Amazon Chronos: `amazon/chronos-t5-small`)
+* Time-aware training (walk-forward + holdout)
+* Centralized **MLflow Tracking Server + Model Registry**
+* Explicit promotion via alias (`prod`)
+* Immutable Docker images for inference
+* One-time model load with in-memory reuse
 
-All models register under the **same `MODEL_NAME`** and the API always serves **`@prod`**.
+### Multi-Model Training, Single Serving Interface
+
+The same pipeline supports multiple model families:
+
+* **Ridge Regression** (interpretable baseline)
+* **AutoML** (FLAML)
+* **Custom Transformer** (PyTorch)
+* **HF Foundation Model** (Amazon Chronos: `amazon/chronos-t5-small`)
+
+All models register under a single `MODEL_NAME`.
+The API **always serves `models:/<MODEL_NAME>@prod`**.
 
 ---
 
-## Architecture Diagrams
+## Architecture
 
-### System Architecture (AWS + MLflow + ECS)
+### System Architecture (AWS)
 
 ```mermaid
 flowchart LR
   subgraph Data["Data Source"]
-    HF["Hugging Face Dataset (OHLCV)"]
+    HF["Hugging Face OHLCV Dataset"]
   end
 
-  subgraph Train["Training (Local/CI/Runner)"]
-    FE["Feature Engineering\n(returns + rolling stats)"]
-    TR["Train Models\n(ridge/automl/transformer/hf)"]
-    EV["Evaluation\n(time-aware splits)"]
+  subgraph Train["Training (Local / EC2)"]
+    FE["Feature Engineering"]
+    TR["Train & Evaluate"]
   end
 
   subgraph Registry["Model Registry"]
-    MLF["MLflow Tracking Server\n(EC2)"]
-    S3["S3 Artifact Store\n(models, plots)"]
+    MLF["MLflow Server (EC2)"]
+    S3["S3 Artifact Store"]
   end
 
-  subgraph Serve["Serving (AWS)"]
-    ECR["ECR (Container Registry)"]
-    ECS["ECS Fargate Service\nFastAPI Inference"]
+  subgraph Serve["Online Serving"]
     ALB["Application Load Balancer"]
+    ECS["ECS Service (FastAPI)"]
     CW["CloudWatch Logs"]
   end
 
-  HF --> FE --> TR --> EV --> MLF
+  HF --> FE --> TR --> MLF
   MLF <--> S3
-  Train -->|register model| MLF
-
-  ECR --> ECS
-  ECS --> CW
+  MLF -->|load @prod| ECS
   ALB --> ECS
-
-  MLF -->|load prod model| ECS
+  ECS --> CW
 ```
 
-### CI/CD Flow (GitHub Actions → AWS)
+---
 
-```mermaid
-sequenceDiagram
-  participant Dev as Developer
-  participant GH as GitHub
-  participant CI as Actions: CI
-  participant CD as Actions: Deploy
-  participant ECR as AWS ECR
-  participant ECS as AWS ECS
+## CI vs Deployment Model
 
-  Dev->>GH: Push / PR
-  GH->>CI: Run lint + tests
-  CI-->>GH: Status checks
+### CI (Automatic)
 
-  Dev->>GH: Merge to main
-  GH->>CD: Build & deploy workflow
-  CD->>ECR: Build image + push tag (git SHA)
-  CD->>ECS: Update task definition + force new deployment
-  ECS-->>CD: Service stable
-```
+Runs on pull requests and `main`:
+
+* lint (`ruff`)
+* tests (`pytest`)
+* Docker build
+* FastAPI boot + `/ready` smoke test (model load skipped)
+
+CI **never**:
+
+* trains models
+* touches MLflow registry
+* deploys to AWS
+
+### Deployment (Manual)
+
+* Infrastructure provisioned via **Terraform**
+* Models trained **outside CI**
+* ECS deployments triggered **manually**
+* AWS resources are **not kept running continuously**
+
+This separation avoids unnecessary cloud spend while preserving production realism.
 
 ---
 
@@ -113,49 +201,51 @@ sequenceDiagram
 ```
 stock-price-predictor/
 ├── src/
-│   ├── data/                 # HF loading + feature engineering
-│   ├── models/               # ridge / automl / transformer / hf
-│   ├── training/             # training entrypoint + dispatch + eval + registry
+│   ├── data/                 # Dataset loading + feature engineering
+│   ├── models/               # Model implementations
+│   ├── training/             # Train / evaluate / register
 │   └── serving/              # FastAPI inference service
 ├── configs/                  # Training configs
-├── infra/terraform/          # AWS IaC (MLflow EC2, S3, ECR, ECS, ALB)
+├── infra/terraform/          # AWS IaC (EC2, S3, ECR, ECS, ALB)
 ├── docker/                   # Dockerfile
-├── .github/workflows/        # CI/CD pipelines
-├── scripts/                  # Train & promote helpers
+├── .github/workflows/        # CI + manual deploy
+├── scripts/                  # Train / promote helpers
 ├── tests/
 ├── Makefile
 ├── requirements.txt
-├── LICENSE
 └── README.md
 ```
 
 ---
 
-## How to Run (Local)
+# Runbooks
 
-### 0) Prerequisites
+This project supports **two fully supported execution paths**:
 
-* Python 3.11+
-* Docker (for container testing)
-* (Optional) AWS CLI + Terraform (for cloud deploy)
+1. **Local (developer) deployment**
+2. **AWS (production-style) deployment**
 
-### 1) Setup
+Both paths are intentionally documented and tested.
 
-```bash
-make setup
-make lint
-make test
-```
+---
 
-### 2) Start MLflow locally (dev mode)
+## Runbook A — Local Development & Deployment
 
-In a new terminal:
+**Purpose:** Fast iteration, debugging, experimentation, CI validation.
+
+### A1. Start MLflow locally
 
 ```bash
 make mlflow
 ```
 
-Set MLflow env vars:
+MLflow UI:
+
+```
+http://127.0.0.1:5001
+```
+
+Set environment variables:
 
 ```bash
 export MLFLOW_TRACKING_URI=http://127.0.0.1:5001
@@ -163,191 +253,188 @@ export MODEL_NAME=stock-price-predictor
 export MODEL_ALIAS=prod
 ```
 
-### 3) Configure training data
+---
 
-Edit `configs/train.yaml`:
-
-* Set `data.hf_dataset_id` to: `paperswithbacktest/Stocks-Daily-Price`
-* Dataset schema: `symbol, date, open, high, low, close, volume, adj_close`
-* Recommended price column for returns: `adj_close`
-* Set `data.universe` to a small list of tickers (MVP)
-* This dataset is provided as a single `train` split; time-based validation is done via walk-forward splitting in training.
-
-### 4) Train a model and register it
-
-Example (ridge baseline):
+### A2. Train and register a model locally
 
 ```bash
-make train
-
-# Train other families
-PYTHONPATH=. .venv/bin/python -m src.training.train --config configs/train.yaml --model_family automl
-PYTHONPATH=. .venv/bin/python -m src.training.train --config configs/train.yaml --model_family custom_transformer
-PYTHONPATH=. .venv/bin/python -m src.training.train --config configs/train.yaml --model_family hf_finetune
+PYTHONPATH=. .venv/bin/python \
+  -m src.training.train \
+  --config configs/train.yaml \
+  --model_family ridge
 ```
 
-### 5) Promote a version to production alias (`prod`)
+This logs parameters, metrics, artifacts, and registers a model version.
 
-After training prints a registered version (e.g., `12`):
+---
+
+### A3. Promote a model to `prod`
 
 ```bash
-export MLFLOW_TRACKING_URI=http://127.0.0.1:5001
-export MODEL_NAME=stock-price-predictor
-export MODEL_ALIAS=prod
-./scripts/promote_model.sh 12
+./scripts/promote_model.sh <VERSION_NUMBER>
 ```
 
-### 6) Run the API locally
+---
+
+### A4. Run FastAPI locally
 
 ```bash
 make serve
 ```
 
-Check:
-
-* Health: `GET http://127.0.0.1:8000/health`
-* Ready:  `GET http://127.0.0.1:8000/ready`
-
-### 7) Call `/predict`
+Verify:
 
 ```bash
-curl -X POST "http://127.0.0.1:8000/predict" \
+curl http://127.0.0.1:8000/health
+curl http://127.0.0.1:8000/ready
+```
+
+---
+
+### A5. Local prediction test
+
+```bash
+curl -X POST http://127.0.0.1:8000/predict \
   -H "Content-Type: application/json" \
-  -d '{
-    "symbol":"AAPL",
-    "horizon":1,
-    "ohlcv_window":[
-      {"date":"2024-11-01","open":170.0,"high":172.0,"low":169.0,"close":171.0,"volume":52000000},
-      {"date":"2024-11-04","open":171.0,"high":173.0,"low":170.0,"close":172.5,"volume":48000000}
-      // ... include >= 30 rows (>= 64 recommended for Chronos)
-    ]
-  }'
+  -d @examples/sample_request.json
 ```
 
 ---
 
-## How to Run (Docker)
+## Runbook B — AWS Production Deployment
 
-Build:
+**Purpose:** Demonstrate real cloud deployment and registry-backed serving.
 
-```bash
-make docker-build
-```
-
-Run:
-
-```bash
-docker run -p 8000:8000 \
-  -e MLFLOW_TRACKING_URI=http://host.docker.internal:5001 \
-  -e MODEL_NAME=stock-price-predictor \
-  -e MODEL_ALIAS=prod \
-  stock-price-predictor:local
-```
-
----
-
-## How to Deploy (AWS, Terraform)
-
-### 0) Requirements
-
-* Terraform installed
-* AWS CLI configured (`aws sts get-caller-identity` works)
-* A VPC + subnets available (you will paste IDs into tfvars)
-
-### 1) Provision MLflow EC2 + S3 + ECR + ECS + ALB
+### B1. Provision infrastructure
 
 ```bash
 cd infra/terraform/envs/dev
-cp terraform.tfvars.example terraform.tfvars
-# edit terraform.tfvars with your VPC/subnet IDs and allowed CIDRs
-
 terraform init
-terraform fmt
 terraform validate
 terraform apply
 ```
 
-Terraform outputs:
+---
 
-* MLflow tracking URI (EC2 public IP)
-* S3 artifact bucket name
-* ECR repo URL
-* ALB DNS name (your public API endpoint)
-* ECS cluster + service
+### B2. Verify MLflow
 
-### 2) Push your first container image to ECR
-
-```bash
-AWS_REGION=us-west-2
-ECR_REPO_URL=$(terraform -chdir=infra/terraform/envs/dev output -raw ecr_repo_url)
-
-aws ecr get-login-password --region "$AWS_REGION" \
-  | docker login --username AWS --password-stdin "$ECR_REPO_URL"
-
-docker build -f docker/Dockerfile -t "$ECR_REPO_URL:latest" .
-docker push "$ECR_REPO_URL:latest"
 ```
-
-Force ECS to pull the latest image:
-
-```bash
-aws ecs update-service \
-  --cluster "$(terraform -chdir=infra/terraform/envs/dev output -raw ecs_cluster_name)" \
-  --service "$(terraform -chdir=infra/terraform/envs/dev output -raw ecs_service_name)" \
-  --force-new-deployment \
-  --region "$AWS_REGION"
-```
-
-### 3) Verify deployment
-
-Your API endpoint:
-
-```bash
-echo "http://$(terraform -chdir=infra/terraform/envs/dev output -raw alb_dns_name)"
+http://<MLFLOW_EC2_PUBLIC_IP>:5000
 ```
 
 ---
 
-## CI/CD
+### B3. Train against AWS MLflow
 
-### CI (Pull Requests)
+```bash
+export MLFLOW_TRACKING_URI=http://<MLFLOW_EC2_PUBLIC_IP>:5000
+export MODEL_NAME=stock-price-predictor
+```
 
-* ruff lint
-* pytest
+```bash
+PYTHONPATH=. .venv/bin/python \
+  -m src.training.train \
+  --config configs/train.yaml \
+  --model_family ridge
+```
 
-### CD (Merge to main)
+---
 
-* builds Docker image
-* pushes to ECR
-* deploys to ECS
+### B4. Promote to `prod`
 
-You must configure GitHub Secrets for deploy (or upgrade to OIDC later):
+```bash
+./scripts/promote_model.sh <VERSION_NUMBER>
+```
 
-* `AWS_ACCESS_KEY_ID`
-* `AWS_SECRET_ACCESS_KEY`
-* `AWS_ACCOUNT_ID`
-* `AWS_REGION`
-* `ECR_REPO`
-* `ECS_CLUSTER`
-* `ECS_SERVICE`
+**Mandatory.** ECS will not start without a `prod` alias.
+
+---
+
+### B5. Deploy to ECS
+
+```bash
+aws ecs update-service \
+  --cluster <ecs-cluster> \
+  --service <ecs-service> \
+  --force-new-deployment \
+  --region <region>
+```
+
+---
+
+### B6. Verify deployment
+
+```bash
+curl http://<ALB_DNS>/health
+curl http://<ALB_DNS>/ready
+```
+
+---
+
+## Runbook C — Promote & Redeploy (Production Loop)
+
+1. Train new model
+2. Validate metrics in MLflow
+3. Promote version to `prod`
+4. Force ECS redeploy
+5. Verify `/health`, `/ready`, `/predict`
+
+This is the **only supported production update path**.
+
+---
+
+## Runbook D — CI Behavior
+
+CI runs linting, tests, Docker builds, and boot-time smoke tests.
+
+CI **never** trains models, touches the registry, or deploys to AWS.
+
+---
+
+## Runbook E — Cost Control
+
+Stop resources:
+
+```bash
+aws ec2 stop-instances --instance-ids <mlflow-instance-id>
+aws ecs update-service --desired-count 0
+```
+
+Or destroy everything:
+
+```bash
+terraform destroy
+```
+
+---
+
+## Supported Execution Matrix
+
+| Mode  | Training | Registry        | Serving       | Cost |
+| ----- | -------- | --------------- | ------------- | ---- |
+| Local | ✅        | Local MLflow    | Local FastAPI | $0   |
+| AWS   | ✅        | MLflow EC2 + S3 | ECS + ALB     | $$   |
+| CI    | ❌        | ❌               | Smoke only    | $0   |
 
 ---
 
 ## Security Notes
 
-* Do not commit secrets. Use `.env` locally and GitHub Secrets in CI/CD.
-* Prefer IAM roles for EC2/ECS runtime access (no long-lived keys).
-* Restrict MLflow EC2 inbound (`5001`) to your IP or VPC CIDR.
+* No secrets committed
+* IAM roles used for EC2/ECS
+* Restricted security groups
+* No long-lived credentials in containers
 
 ---
 
 ## Disclaimer
 
-For educational and engineering demonstration purposes only.
-Not financial advice. No performance guarantees.
+Educational and engineering demonstration only.
+Not financial advice.
 
 ---
 
 ## License
 
-MIT License. See `LICENSE`.
+MIT License.
+
